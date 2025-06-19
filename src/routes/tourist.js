@@ -2,23 +2,8 @@ const express = require("express")
 const touristController = require("../controllers/touristController")
 const { authenticateToken, requireRole } = require("../middleware/auth")
 const { validate, schemas } = require("../middleware/validation")
-const Joi = require("joi")
 
 const router = express.Router()
-
-// Esquema de validación para actualizar punto turístico
-const updateTouristSchema = Joi.object({
-  lugarDestino: Joi.string().min(3).max(255),
-  nombre: Joi.string().min(3).max(255),
-  descripcion: Joi.string().min(10).max(2000),
-  ubicacion: Joi.object({
-    coordinates: Joi.array().items(Joi.number()).length(2),
-    type: Joi.string().valid("Point").default("Point"),
-  }),
-  images: Joi.array().items(Joi.string().uri()),
-  categoria: Joi.string().valid("restaurante", "hotel", "atraccion", "transporte", "servicio", "otro"),
-  calificacion: Joi.number().min(0).max(5),
-})
 
 /**
  * @swagger
@@ -116,6 +101,7 @@ const updateTouristSchema = Joi.object({
  *               minItems: 2
  *               maxItems: 2
  *               example: [-77.0428, -12.0464]
+ *               description: "Formato: [longitud, latitud]"
  *             type:
  *               type: string
  *               enum: [Point]
@@ -126,6 +112,7 @@ const updateTouristSchema = Joi.object({
  *             type: string
  *             format: uri
  *           example: ["https://ejemplo.com/imagen1.jpg"]
+ *           description: "Array de URLs de imágenes (opcional)"
  *         categoria:
  *           type: string
  *           enum: [restaurante, hotel, atraccion, transporte, servicio, otro]
@@ -253,6 +240,31 @@ router.get("/:id", authenticateToken, touristController.getTouristSpotById)
  *         application/json:
  *           schema:
  *             $ref: '#/components/schemas/TouristSpotRequest'
+ *           examples:
+ *             ejemplo_plaza:
+ *               summary: Ejemplo de plaza
+ *               value:
+ *                 lugarDestino: "Centro Histórico de Lima"
+ *                 nombre: "Plaza de Armas"
+ *                 descripcion: "Plaza principal de Lima con arquitectura colonial impresionante y mucha historia"
+ *                 ubicacion:
+ *                   coordinates: [-77.0428, -12.0464]
+ *                   type: "Point"
+ *                 images: ["https://ejemplo.com/imagen1.jpg"]
+ *                 categoria: "atraccion"
+ *                 calificacion: 4.5
+ *             ejemplo_restaurante:
+ *               summary: Ejemplo de restaurante
+ *               value:
+ *                 lugarDestino: "Miraflores"
+ *                 nombre: "Central Restaurante"
+ *                 descripcion: "Restaurante gourmet con cocina peruana moderna, reconocido internacionalmente"
+ *                 ubicacion:
+ *                   coordinates: [-77.0365, -12.1203]
+ *                   type: "Point"
+ *                 images: ["https://ejemplo.com/central1.jpg", "https://ejemplo.com/central2.jpg"]
+ *                 categoria: "restaurante"
+ *                 calificacion: 4.8
  *     responses:
  *       201:
  *         description: Punto turístico creado correctamente
@@ -338,7 +350,7 @@ router.post("/", authenticateToken, validate(schemas.tourist), touristController
  *       403:
  *         description: Sin permisos para editar este punto turístico
  */
-router.put("/:id", authenticateToken, validate(updateTouristSchema), touristController.updateTouristSpot)
+router.put("/:id", authenticateToken, validate(schemas.updateTourist), touristController.updateTouristSpot)
 
 /**
  * @swagger
@@ -382,6 +394,7 @@ router.delete("/:id", authenticateToken, touristController.deleteTouristSpot)
  *           minimum: -90
  *           maximum: 90
  *         description: Latitud
+ *         example: -12.0464
  *       - in: query
  *         name: lng
  *         required: true
@@ -390,6 +403,7 @@ router.delete("/:id", authenticateToken, touristController.deleteTouristSpot)
  *           minimum: -180
  *           maximum: 180
  *         description: Longitud
+ *         example: -77.0428
  *       - in: query
  *         name: radius
  *         schema:
