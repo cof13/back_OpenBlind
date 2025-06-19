@@ -3,10 +3,8 @@ const loggerService = require("../services/loggerService")
 
 const connectMongoDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    })
+    // Remover las opciones deprecadas useNewUrlParser y useUnifiedTopology
+    await mongoose.connect(process.env.MONGODB_URI)
 
     loggerService.info("✅ Conexión a MongoDB establecida correctamente")
 
@@ -17,6 +15,10 @@ const connectMongoDB = async () => {
 
     mongoose.connection.on("disconnected", () => {
       loggerService.warn("⚠️ MongoDB desconectado")
+    })
+
+    mongoose.connection.on("reconnected", () => {
+      loggerService.info("🔄 MongoDB reconectado")
     })
 
     return mongoose.connection
