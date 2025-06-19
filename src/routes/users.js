@@ -2,62 +2,42 @@ const express = require("express")
 const userController = require("../controllers/userController")
 const { authenticateToken, requireRole } = require("../middleware/auth")
 const { validate, schemas } = require("../middleware/validation")
-const Joi = require("joi")
 
 const router = express.Router()
-
-// Esquemas de validación específicos para usuarios
-const updateProfileSchema = Joi.object({
-  nombres: Joi.string().min(2).max(100),
-  apellidos: Joi.string().min(2).max(100),
-  telefono: Joi.string().pattern(/^[0-9+\-\s()]+$/),
-  fechaNacimiento: Joi.date().max("now"),
-  profileImage: Joi.string().uri(),
-  preferences: Joi.object({
-    language: Joi.string().valid("es", "en"),
-    voiceSpeed: Joi.number().min(0.5).max(2.0),
-    notifications: Joi.boolean(),
-  }),
-})
-
-const changePasswordSchema = Joi.object({
-  currentPassword: Joi.string().required(),
-  newPassword: Joi.string().min(6).required(),
-})
-
-const updateUserSchema = Joi.object({
-  email: Joi.string().email(),
-  password: Joi.string().min(6),
-  role: Joi.string().valid("admin", "user"),
-  active: Joi.boolean(),
-})
 
 /**
  * @swagger
  * components:
  *   schemas:
- *     UserProfile:
+ *     EncryptedUserProfile:
  *       type: object
+ *       description: Perfil de usuario con datos sensibles encriptados en la base de datos
  *       properties:
  *         nombres:
  *           type: string
  *           example: "Juan"
+ *           description: "Nombre encriptado en DB, desencriptado en respuesta"
  *         apellidos:
  *           type: string
  *           example: "Pérez"
+ *           description: "Apellidos encriptados en DB, desencriptados en respuesta"
  *         telefono:
  *           type: string
  *           example: "+1234567890"
+ *           description: "Teléfono encriptado en DB, desencriptado en respuesta"
  *         fechaNacimiento:
  *           type: string
  *           format: date
  *           example: "1990-01-01"
+ *           description: "Fecha de nacimiento (no encriptada)"
  *         profileImage:
  *           type: string
  *           format: uri
  *           example: "https://ejemplo.com/imagen.jpg"
+ *           description: "URL de imagen encriptada en DB, desencriptada en respuesta"
  *         preferences:
  *           type: object
+ *           description: "Preferencias del usuario (no encriptadas)"
  *           properties:
  *             language:
  *               type: string
@@ -71,13 +51,45 @@ const updateUserSchema = Joi.object({
  *             notifications:
  *               type: boolean
  *               example: true
+ *             theme:
+ *               type: string
+ *               enum: [light, dark, high-contrast]
+ *               example: "light"
+ *         lastProfileUpdate:
+ *           type: string
+ *           format: date-time
+ *           description: "Última actualización del perfil"
+ *         encryptionVersion:
+ *           type: string
+ *           example: "v1"
+ *           description: "Versión de encriptación utilizada"
+ *
+ *     EncryptionStatus:
+ *       type: object
+ *       properties:
+ *         migrated:
+ *           type: integer
+ *           description: "Número de perfiles migrados"
+ *           example: 25
+ *         errors:
+ *           type: integer
+ *           description: "Número de errores durante la migración"
+ *           example: 0
+ *         valid:
+ *           type: integer
+ *           description: "Número de perfiles con encriptación válida"
+ *           example: 100
+ *         invalid:
+ *           type: integer
+ *           description: "Número de perfiles con problemas de encriptación"
+ *           example: 2
  */
 
 /**
  * @swagger
  * /users/profile:
  *   get:
- *     summary: Obtener perfil del usuario
+ *     summary: Obtener perfil del usuario (datos desencriptados automáticamente)
  *     tags: [Usuarios]
  *     security:
  *       - bearerAuth: []
@@ -98,7 +110,7 @@ const updateUserSchema = Joi.object({
  *                     - type: object
  *                       properties:
  *                         profile:
- *                           $ref: '#/components/schemas/UserProfile'
+ *                           $ref: '#/components/schemas/EncryptedUserProfile'
  *                 message:
  *                   type: string
  *       401:
@@ -110,7 +122,7 @@ router.get("/profile", authenticateToken, userController.getProfile)
  * @swagger
  * /users/profile:
  *   put:
- *     summary: Actualizar perfil del usuario
+ *     summary: Actualizar perfil del usuario (datos se encriptan automáticamente)
  *     tags: [Usuarios]
  *     security:
  *       - bearerAuth: []
@@ -119,20 +131,84 @@ router.get("/profile", authenticateToken, userController.getProfile)
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/UserProfile'
+ *             type: object
+ *             properties:
+ *               nombres:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "Juan Carlos"
+ *                 description: "Se encriptará automáticamente"
+ *               apellidos:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 100
+ *                 example: "Pérez González"
+ *                 description: "Se encriptará automáticamente"
+ *               telefono:
+ *                 type: string
+ *                 pattern: "^[0-9+\\-\\s()]+$"
+ *                 example: "+51 987 654 321"
+ *                 description: "Se encriptará automáticamente"
+ *               fechaNacimiento:
+ *                 type: string
+ *                 format: date
+ *                 example: "1990-01-15"
+ *               profileImage:
+ *                 type: string
+ *                 format: uri
+ *                 example: "https://ejemplo.com/mi-foto.jpg"
+ *                 description: "URL se encriptará automáticamente"
+ *               preferences:
+ *                 type: object
+ *                 properties:
+ *                   language:
+ *                     type: string
+ *                     enum: [es, en]
+ *                   voiceSpeed:
+ *                     type: number
+ *                     minimum: 0.5
+ *                     maximum: 2.0
+ *                   notifications:
+ *                     type: boolean
+ *                   theme:
+ *                     type: string
+ *                     enum: [light, dark, high-contrast]
+ *           examples:
+ *             perfil_completo:
+ *               summary: Perfil completo
+ *               value:
+ *                 nombres: "Ana María"
+ *                 apellidos: "García López"
+ *                 telefono: "+51 987 123 456"
+ *                 fechaNacimiento: "1995-03-22"
+ *                 profileImage: "https://ejemplo.com/ana-foto.jpg"
+ *                 preferences:
+ *                   language: "es"
+ *                   voiceSpeed: 1.2
+ *                   notifications: true
+ *                   theme: "high-contrast"
  *     responses:
  *       200:
  *         description: Perfil actualizado correctamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Success'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/EncryptedUserProfile'
+ *                 message:
+ *                   type: string
  *       400:
  *         description: Error de validación
  *       401:
  *         description: No autenticado
  */
-router.put("/profile", authenticateToken, validate(updateProfileSchema), userController.updateProfile)
+router.put("/profile", authenticateToken, validate(schemas.updateProfile), userController.updateProfile)
 
 /**
  * @swagger
@@ -167,13 +243,13 @@ router.put("/profile", authenticateToken, validate(updateProfileSchema), userCon
  *       401:
  *         description: No autenticado
  */
-router.put("/change-password", authenticateToken, validate(changePasswordSchema), userController.changePassword)
+router.put("/change-password", authenticateToken, validate(schemas.changePassword), userController.changePassword)
 
 /**
  * @swagger
  * /users:
  *   get:
- *     summary: Obtener lista de usuarios (Solo Admin)
+ *     summary: Obtener lista de usuarios (Solo Admin) - Datos desencriptados
  *     tags: [Usuarios]
  *     security:
  *       - bearerAuth: []
@@ -197,7 +273,7 @@ router.put("/change-password", authenticateToken, validate(changePasswordSchema)
  *         name: search
  *         schema:
  *           type: string
- *         description: Buscar por email o nombre
+ *         description: Buscar por email, nombre o apellidos (busca en datos desencriptados)
  *     responses:
  *       200:
  *         description: Lista de usuarios obtenida correctamente
@@ -212,7 +288,12 @@ router.put("/change-password", authenticateToken, validate(changePasswordSchema)
  *                 data:
  *                   type: array
  *                   items:
- *                     $ref: '#/components/schemas/User'
+ *                     allOf:
+ *                       - $ref: '#/components/schemas/User'
+ *                       - type: object
+ *                         properties:
+ *                           profile:
+ *                             $ref: '#/components/schemas/EncryptedUserProfile'
  *                 pagination:
  *                   $ref: '#/components/schemas/Pagination'
  *                 message:
@@ -224,9 +305,46 @@ router.get("/", authenticateToken, requireRole(["admin"]), userController.getAll
 
 /**
  * @swagger
+ * /users/search:
+ *   get:
+ *     summary: Búsqueda avanzada de usuarios (Solo Admin)
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: query
+ *         required: true
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *         description: Término de búsqueda (nombre, apellidos, email)
+ *         example: "Juan"
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Resultados de búsqueda obtenidos
+ *       400:
+ *         description: Consulta muy corta
+ *       403:
+ *         description: Sin permisos de administrador
+ */
+router.get("/search", authenticateToken, requireRole(["admin"]), userController.searchUsers)
+
+/**
+ * @swagger
  * /users/{id}:
  *   get:
- *     summary: Obtener usuario por ID (Solo Admin)
+ *     summary: Obtener usuario por ID (Solo Admin) - Datos desencriptados
  *     tags: [Usuarios]
  *     security:
  *       - bearerAuth: []
@@ -288,7 +406,7 @@ router.get("/:id", authenticateToken, requireRole(["admin"]), userController.get
  *       403:
  *         description: Sin permisos de administrador
  */
-router.put("/:id", authenticateToken, requireRole(["admin"]), validate(updateUserSchema), userController.updateUser)
+router.put("/:id", authenticateToken, requireRole(["admin"]), validate(schemas.updateUser), userController.updateUser)
 
 /**
  * @swagger
@@ -316,5 +434,82 @@ router.put("/:id", authenticateToken, requireRole(["admin"]), validate(updateUse
  *         description: Sin permisos de administrador
  */
 router.delete("/:id", authenticateToken, requireRole(["admin"]), userController.deleteUser)
+
+/**
+ * @swagger
+ * /users/migrate-encryption:
+ *   post:
+ *     summary: Migrar datos existentes a formato encriptado (Solo Admin)
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     description: |
+ *       Migra todos los perfiles de usuario existentes para que los datos sensibles
+ *       (nombres, apellidos, teléfono, etc.) estén encriptados en la base de datos.
+ *       
+ *       **IMPORTANTE**: Este endpoint debe ejecutarse solo una vez después de implementar
+ *       la encriptación en un sistema existente.
+ *     responses:
+ *       200:
+ *         description: Migración completada exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/EncryptionStatus'
+ *                 message:
+ *                   type: string
+ *                   example: "Migración de encriptación completada"
+ *       403:
+ *         description: Sin permisos de administrador
+ *       500:
+ *         description: Error durante la migración
+ */
+router.post("/migrate-encryption", authenticateToken, requireRole(["admin"]), userController.migrateEncryption)
+
+/**
+ * @swagger
+ * /users/verify-encryption:
+ *   get:
+ *     summary: Verificar integridad de la encriptación (Solo Admin)
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     description: |
+ *       Verifica que los datos encriptados en la base de datos puedan ser
+ *       desencriptados correctamente y que tengan sentido.
+ *     responses:
+ *       200:
+ *         description: Verificación completada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     valid:
+ *                       type: integer
+ *                       description: "Perfiles con encriptación válida"
+ *                       example: 95
+ *                     invalid:
+ *                       type: integer
+ *                       description: "Perfiles con problemas"
+ *                       example: 2
+ *                 message:
+ *                   type: string
+ *       403:
+ *         description: Sin permisos de administrador
+ */
+router.get("/verify-encryption", authenticateToken, requireRole(["admin"]), userController.verifyEncryption)
 
 module.exports = router

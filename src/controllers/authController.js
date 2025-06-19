@@ -19,16 +19,17 @@ class AuthController {
       // Crear usuario en MySQL
       const userId = await User.create({ email, password, role: "user" })
 
-      // Crear perfil en MongoDB
-      const userProfile = new UserProfile({
+      // Crear perfil encriptado en MongoDB
+      const profileData = {
         userId,
         nombres,
         apellidos,
         telefono,
         fechaNacimiento: fechaNacimiento ? new Date(fechaNacimiento) : null,
-      })
+        // Los datos se encriptarán automáticamente gracias a los setters del modelo
+      }
 
-      await userProfile.save()
+      const userProfile = await UserProfile.createEncrypted(profileData)
 
       // Generar tokens
       const { accessToken, refreshToken } = authService.generateTokens({
@@ -40,7 +41,14 @@ class AuthController {
       // Guardar sesión
       await authService.saveSession(userId, accessToken, refreshToken)
 
-      loggerService.info(`Usuario registrado exitosamente: ${email}`, { userId, email })
+      loggerService.info(`Usuario registrado exitosamente: ${email}`, { 
+        userId, 
+        email,
+        encryptedProfile: true 
+      })
+
+      // Devolver datos desencriptados para la respuesta
+      const responseProfile = userProfile.getDecryptedData()
 
       res.status(201).json(
         standardResponse.success(
@@ -49,12 +57,7 @@ class AuthController {
               id: userId,
               email,
               role: "user",
-              profile: {
-                nombres,
-                apellidos,
-                telefono,
-                fechaNacimiento,
-              },
+              profile: responseProfile,
             },
             token: accessToken,
             refreshToken,
@@ -86,8 +89,8 @@ class AuthController {
         return res.status(401).json(standardResponse.error("INVALID_CREDENTIALS", "Credenciales inválidas"))
       }
 
-      // Obtener perfil
-      const userProfile = await UserProfile.findOne({ userId: user.id })
+      // Obtener perfil (datos se desencriptan automáticamente)
+      const userProfile = await UserProfile.findByUserId(user.id)
 
       // Generar tokens
       const { accessToken, refreshToken } = authService.generateTokens({
@@ -99,7 +102,11 @@ class AuthController {
       // Guardar sesión
       await authService.saveSession(user.id, accessToken, refreshToken)
 
-      loggerService.info(`Usuario logueado exitosamente: ${email}`, { userId: user.id, email })
+      loggerService.info(`Usuario logueado exitosamente: ${email}`, { 
+        userId: user.id, 
+        email,
+        hasProfile: !!userProfile 
+      })
 
       res.json(
         standardResponse.success(
@@ -108,15 +115,7 @@ class AuthController {
               id: user.id,
               email: user.email,
               role: user.role,
-              profile: userProfile
-                ? {
-                    nombres: userProfile.nombres,
-                    apellidos: userProfile.apellidos,
-                    telefono: userProfile.telefono,
-                    fechaNacimiento: userProfile.fechaNacimiento,
-                    preferences: userProfile.preferences,
-                  }
-                : null,
+              profile: userProfile ? userProfile.getDecryptedData() : null,
             },
             token: accessToken,
             refreshToken,
@@ -203,7 +202,7 @@ class AuthController {
         return res.status(404).json(standardResponse.error("USER_NOT_FOUND", "Usuario no encontrado"))
       }
 
-      const userProfile = await UserProfile.findOne({ userId: user.id })
+      const userProfile = await UserProfile.findByUserId(user.id)
 
       res.json(
         standardResponse.success(
@@ -213,22 +212,96 @@ class AuthController {
             role: user.role,
             active: user.active,
             created_at: user.created_at,
-            profile: userProfile
-              ? {
-                  nombres: userProfile.nombres,
-                  apellidos: userProfile.apellidos,
-                  telefono: userProfile.telefono,
-                  fechaNacimiento: userProfile.fechaNacimiento,
-                  profileImage: userProfile.profileImage,
-                  preferences: userProfile.preferences,
-                }
-              : null,
+            profile: userProfile ? userProfile.getDecryptedData() : null,
           },
           "Perfil obtenido correctamente",
         ),
       )
     } catch (error) {
       loggerService.error("Error obteniendo perfil:", error)
+      next(error)
+    }
+  }
+
+  // POST /api/auth/complete-profile - Completar perfil después del registro
+  async completeProfile(req, res, next) {
+    try {
+      const { nombres, apellidos, telefono, fechaNacimiento, preferences } = req.body
+      const userId = req.user.id
+
+      // Verificar si ya tiene perfil
+      let userProfile = await UserProfile.findByUserId(userId)
+
+      const profileData = {
+        nombres,
+        apellidos,
+        telefono,
+        fechaNacimiento: fechaNacimiento ? new Date(fechaNacimiento) : null,
+        preferences: preferences || {}
+      }
+
+      if (userProfile) {
+        // Actualizar perfil existente
+        userProfile = await userProfile.updateSafely(profileData)
+      } else {
+        // Crear nuevo perfil
+        userProfile = await UserProfile.createEncrypted({
+          userId,
+          ...profileData
+        })
+      }
+
+      loggerService.info(`Perfil completado para usuario: ${req.user.email}`, { 
+        userId,
+        fieldsProvided: Object.keys(profileData)
+      })
+
+      res.json(
+        standardResponse.success(
+          userProfile.getDecryptedData(),
+          "Perfil completado exitosamente"
+        )
+      )
+    } catch (error) {
+      loggerService.error("Error completando perfil:", error)
+      next(error)
+    }
+  }
+
+  // POST /api/auth/verify-profile - Verificar estado del perfil
+  async verifyProfile(req, res, next) {
+    try {
+      const userId = req.user.id
+      const userProfile = await UserProfile.findByUserId(userId)
+
+      const isComplete = userProfile && 
+                        userProfile.nombres && 
+                        userProfile.apellidos
+
+      const profileStatus = {
+        hasProfile: !!userProfile,
+        isComplete,
+        missingFields: []
+      }
+
+      if (userProfile) {
+        if (!userProfile.nombres) profileStatus.missingFields.push('nombres')
+        if (!userProfile.apellidos) profileStatus.missingFields.push('apellidos')
+      } else {
+        profileStatus.missingFields = ['nombres', 'apellidos']
+      }
+
+      res.json(
+        standardResponse.success(
+          {
+            ...profileStatus,
+            profile: userProfile ? userProfile.getDecryptedData() : null
+          },
+          "Estado del perfil verificado"
+        )
+      )
+    } catch (error) {
+      loggerService.error("Error verificando perfil:", error)
       next(error)
     }
   }

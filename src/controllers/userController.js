@@ -13,7 +13,10 @@ class UserController {
         return res.status(404).json(standardResponse.error("USER_NOT_FOUND", "Usuario no encontrado"))
       }
 
-      const userProfile = await UserProfile.findOne({ userId: user.id })
+      const userProfile = await UserProfile.findByUserId(user.id)
+
+      // Los datos del perfil ya vienen desencriptados gracias a los getters del modelo
+      const profileData = userProfile ? userProfile.getDecryptedData() : null
 
       res.json(
         standardResponse.success(
@@ -23,7 +26,7 @@ class UserController {
             role: user.role,
             active: user.active,
             created_at: user.created_at,
-            profile: userProfile || null,
+            profile: profileData,
           },
           "Perfil obtenido correctamente",
         ),
@@ -40,24 +43,56 @@ class UserController {
       const { nombres, apellidos, telefono, fechaNacimiento, preferences, profileImage } = req.body
       const userId = req.user.id
 
-      // Actualizar perfil en MongoDB
+      // Preparar datos para actualización (la encriptación se maneja automáticamente en el modelo)
       const updateData = {}
-      if (nombres) updateData.nombres = helpers.sanitizeText(nombres)
-      if (apellidos) updateData.apellidos = helpers.sanitizeText(apellidos)
-      if (telefono) updateData.telefono = helpers.sanitizeText(telefono)
-      if (fechaNacimiento) updateData.fechaNacimiento = new Date(fechaNacimiento)
-      if (profileImage) updateData.profileImage = profileImage
-      if (preferences) updateData.preferences = preferences
+      
+      if (nombres !== undefined) {
+        updateData.nombres = helpers.sanitizeText(nombres)
+      }
+      
+      if (apellidos !== undefined) {
+        updateData.apellidos = helpers.sanitizeText(apellidos)
+      }
+      
+      if (telefono !== undefined) {
+        updateData.telefono = helpers.sanitizeText(telefono)
+      }
+      
+      if (fechaNacimiento !== undefined) {
+        updateData.fechaNacimiento = fechaNacimiento ? new Date(fechaNacimiento) : null
+      }
+      
+      if (profileImage !== undefined) {
+        updateData.profileImage = profileImage
+      }
+      
+      if (preferences !== undefined) {
+        updateData.preferences = preferences
+      }
 
-      const userProfile = await UserProfile.findOneAndUpdate({ userId }, updateData, {
-        new: true,
-        upsert: true,
-        runValidators: true,
+      // Buscar perfil existente o crear uno nuevo
+      let userProfile = await UserProfile.findByUserId(userId)
+      
+      if (userProfile) {
+        // Actualizar perfil existente usando método seguro
+        userProfile = await userProfile.updateSafely(updateData)
+      } else {
+        // Crear nuevo perfil
+        userProfile = await UserProfile.createEncrypted({
+          userId,
+          ...updateData
+        })
+      }
+
+      loggerService.info(`Perfil actualizado para usuario: ${req.user.email}`, { 
+        userId,
+        fieldsUpdated: Object.keys(updateData)
       })
 
-      loggerService.info(`Perfil actualizado para usuario: ${req.user.email}`, { userId })
+      // Devolver datos desencriptados
+      const responseData = userProfile.getDecryptedData()
 
-      res.json(standardResponse.success(userProfile, "Perfil actualizado correctamente"))
+      res.json(standardResponse.success(responseData, "Perfil actualizado correctamente"))
     } catch (error) {
       loggerService.error("Error actualizando perfil:", error)
       next(error)
@@ -73,7 +108,7 @@ class UserController {
 
       const { users, total } = await User.findAll(page, limit)
 
-      // Obtener perfiles de MongoDB
+      // Obtener perfiles de MongoDB (los datos vienen desencriptados automáticamente)
       const userIds = users.map((user) => user.id)
       const profiles = await UserProfile.find({ userId: { $in: userIds } })
 
@@ -82,20 +117,29 @@ class UserController {
         const profile = profiles.find((p) => p.userId === user.id)
         return {
           ...user,
-          profile: profile || null,
+          profile: profile ? profile.getDecryptedData() : null,
         }
       })
 
       // Filtrar por búsqueda si se proporciona
       let filteredUsers = usersWithProfiles
       if (search) {
-        filteredUsers = usersWithProfiles.filter(
-          (user) =>
-            user.email.toLowerCase().includes(search.toLowerCase()) ||
-            (user.profile &&
-              (user.profile.nombres.toLowerCase().includes(search.toLowerCase()) ||
-                user.profile.apellidos.toLowerCase().includes(search.toLowerCase()))),
-        )
+        filteredUsers = usersWithProfiles.filter((user) => {
+          // Buscar en email
+          if (user.email.toLowerCase().includes(search.toLowerCase())) {
+            return true
+          }
+          
+          // Buscar en perfil (nombres y apellidos ya desencriptados)
+          if (user.profile) {
+            const fullName = `${user.profile.nombres || ''} ${user.profile.apellidos || ''}`.toLowerCase()
+            if (fullName.includes(search.toLowerCase())) {
+              return true
+            }
+          }
+          
+          return false
+        })
       }
 
       const pagination = helpers.calculatePagination(page, limit, total)
@@ -117,13 +161,13 @@ class UserController {
         return res.status(404).json(standardResponse.error("USER_NOT_FOUND", "Usuario no encontrado"))
       }
 
-      const userProfile = await UserProfile.findOne({ userId: user.id })
+      const userProfile = await UserProfile.findByUserId(user.id)
 
       res.json(
         standardResponse.success(
           {
             ...user,
-            profile: userProfile || null,
+            profile: userProfile ? userProfile.getDecryptedData() : null,
           },
           "Usuario obtenido correctamente",
         ),
@@ -160,6 +204,7 @@ class UserController {
       loggerService.info(`Usuario actualizado por admin: ${user.email}`, {
         adminId: req.user.id,
         targetUserId: id,
+        changes: Object.keys(updateData)
       })
 
       res.json(standardResponse.success(null, "Usuario actualizado correctamente"))
@@ -183,9 +228,19 @@ class UserController {
         return res.status(404).json(standardResponse.error("USER_NOT_FOUND", "Usuario no encontrado"))
       }
 
+      // Eliminar usuario en MySQL
       const deleted = await User.delete(id)
       if (!deleted) {
         return res.status(400).json(standardResponse.error("DELETE_FAILED", "Error eliminando usuario"))
+      }
+
+      // Opcional: También eliminar el perfil en MongoDB
+      try {
+        await UserProfile.deleteOne({ userId: Number.parseInt(id) })
+        loggerService.info(`Perfil de usuario eliminado: ${user.email}`)
+      } catch (profileError) {
+        loggerService.warn(`Error eliminando perfil para usuario ${id}:`, profileError)
+        // No fallar la operación principal si falla la eliminación del perfil
       }
 
       loggerService.info(`Usuario eliminado por admin: ${user.email}`, {
@@ -229,6 +284,78 @@ class UserController {
       res.json(standardResponse.success(null, "Contraseña actualizada correctamente"))
     } catch (error) {
       loggerService.error("Error cambiando contraseña:", error)
+      next(error)
+    }
+  }
+
+  // GET /api/users/search (Admin only) - Búsqueda avanzada
+  async searchUsers(req, res, next) {
+    try {
+      const { query, page = 1, limit = 10 } = req.query
+
+      if (!query || query.length < 2) {
+        return res.status(400).json(standardResponse.error("INVALID_SEARCH", "La consulta debe tener al menos 2 caracteres"))
+      }
+
+      // Búsqueda en perfiles (nombres, apellidos)
+      const profiles = await UserProfile.searchByName(query)
+      
+      // Obtener usuarios correspondientes
+      const userIds = profiles.map(p => p.userId)
+      const users = await User.findAll(1, 1000) // Obtener todos para filtrar
+      
+      const filteredUsers = users.users.filter(user => {
+        return userIds.includes(user.id) || 
+               user.email.toLowerCase().includes(query.toLowerCase())
+      })
+
+      // Combinar con perfiles
+      const usersWithProfiles = filteredUsers.map(user => {
+        const profile = profiles.find(p => p.userId === user.id)
+        return {
+          ...user,
+          profile: profile ? profile.getDecryptedData() : null
+        }
+      })
+
+      // Paginación manual
+      const startIndex = (page - 1) * limit
+      const endIndex = startIndex + parseInt(limit)
+      const paginatedResults = usersWithProfiles.slice(startIndex, endIndex)
+      
+      const pagination = helpers.calculatePagination(page, limit, usersWithProfiles.length)
+
+      res.json(standardResponse.paginated(paginatedResults, pagination, "Búsqueda completada"))
+    } catch (error) {
+      loggerService.error("Error en búsqueda de usuarios:", error)
+      next(error)
+    }
+  }
+
+  // POST /api/users/migrate-encryption (Admin only) - Migrar encriptación
+  async migrateEncryption(req, res, next) {
+    try {
+      loggerService.info(`Migración de encriptación iniciada por admin: ${req.user.email}`)
+
+      const result = await UserProfile.migrateEncryption()
+
+      loggerService.info(`Migración completada`, result)
+
+      res.json(standardResponse.success(result, "Migración de encriptación completada"))
+    } catch (error) {
+      loggerService.error("Error en migración de encriptación:", error)
+      next(error)
+    }
+  }
+
+  // GET /api/users/verify-encryption (Admin only) - Verificar encriptación
+  async verifyEncryption(req, res, next) {
+    try {
+      const result = await UserProfile.verifyEncryption()
+
+      res.json(standardResponse.success(result, "Verificación de encriptación completada"))
+    } catch (error) {
+      loggerService.error("Error verificando encriptación:", error)
       next(error)
     }
   }
