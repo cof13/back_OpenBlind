@@ -1,7 +1,7 @@
 require("dotenv").config()
 
 const config = {
-  NODE_ENV: process.env.NODE_ENV || "development",
+  NODE_ENV: process.env.NODE_ENV || "production",
   PORT: process.env.PORT || 3000,
 
   // MySQL
@@ -14,7 +14,7 @@ const config = {
   },
 
   // MongoDB
-  MONGODB_URI: process.env.MONGODB_URI || "mongodb://localhost:27017/openblind",
+  MONGODB_URI: process.env.MONGODB_URI || "mongodb+srv://mcfortiz:Cristi1725@cluster0.jblz2vn.mongodb.net/openblind",
 
   // JWT
   JWT: {
