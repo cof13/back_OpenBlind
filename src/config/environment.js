@@ -6,7 +6,7 @@ const config = {
 
   // MySQL
   MYSQL: {
-    HOST: process.env.MYSQL_HOST || 31.97.42.126,
+    HOST: process.env.MYSQL_HOST || "31.97.42.126",
     PORT: process.env.MYSQL_PORT || 3306,
     DATABASE: process.env.MYSQL_DATABASE || "openblind",
     USER: process.env.MYSQL_USER || "linkear",
